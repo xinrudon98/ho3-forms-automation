@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+
+output/*.xlsx
+output/*.pdf
+
+.DS_Store
+Thumbs.db
