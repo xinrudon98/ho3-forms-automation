@@ -1,0 +1,160 @@
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+
+import pandas as pd
+
+from .config import load_yaml
+from .combo_generator import build_combo_artifacts
+from .utils import make_batch_folder_name
+
+
+class PdfWorkflowError(RuntimeError):
+    pass
+
+
+
+def create_output_folders(base_output_dir: str | Path, combo_count: int) -> list[Path]:
+    base = Path(base_output_dir)
+    base.mkdir(parents=True, exist_ok=True)
+    folders: list[Path] = []
+    for i in range(1, combo_count + 1):
+        folder = base / make_batch_folder_name(i)
+        folder.mkdir(parents=True, exist_ok=True)
+        folders.append(folder)
+    return folders
+
+
+
+def export_schedule_pdfs_with_excel(config_path: str | Path) -> None:
+    try:
+        import xlwings as xw
+    except ImportError as exc:
+        raise PdfWorkflowError("xlwings is required for Excel PDF export") from exc
+
+    config_path = Path(config_path)
+    settings = load_yaml(config_path)
+    base_dir = config_path.parent.parent if config_path.parent.name == "config" else config_path.parent
+    artifacts = build_combo_artifacts(config_path)
+    matrix_df = artifacts.matrix_df.astype(str)
+    workflow = settings["pdf_workflow"]
+
+    base_output_dir = Path(workflow["base_output_dir"])
+    if not base_output_dir.is_absolute():
+        base_output_dir = base_dir / base_output_dir
+    if not base_output_dir.is_absolute():
+        base_output_dir = base_dir / base_output_dir
+    folders = create_output_folders(base_output_dir, len(artifacts.valid_combos))
+
+    excel_path = Path(workflow["template_excel"])
+    if not excel_path.is_absolute():
+        excel_path = base_dir / excel_path
+    if not excel_path.exists():
+        raise PdfWorkflowError(f"Template Excel file not found: {excel_path}")
+
+    app = xw.App(visible=False)
+    app.display_alerts = False
+    app.screen_updating = False
+
+    try:
+        for i, folder in enumerate(folders, start=1):
+            combo_col = f"COMBO {i}"
+            if combo_col not in matrix_df.columns:
+                raise PdfWorkflowError(f"Missing combo column: {combo_col}")
+
+            wb = app.books.open(str(excel_path))
+            try:
+                ws = wb.sheets[workflow.get("master_sheet", "MASTER")]
+                values_to_write = [[j] for j in matrix_df[combo_col].tolist()]
+                ws.range(workflow.get("write_range", "D11:D40")).value = values_to_write
+
+                schedule_sheet = wb.sheets[workflow.get("schedule_sheet", "SCHEDULE OF FORMS")]
+                pdf_path = folder / workflow.get("schedule_output_name", "_Q_SOF.pdf")
+                if pdf_path.exists():
+                    pdf_path.unlink()
+                schedule_sheet.api.ExportAsFixedFormat(0, str(pdf_path))
+            finally:
+                wb.close()
+    finally:
+        app.quit()
+
+
+
+def merge_supplemental_pdfs(config_path: str | Path) -> None:
+    try:
+        import win32com.client
+    except ImportError as exc:
+        raise PdfWorkflowError("pywin32 is required for Acrobat PDF merging") from exc
+
+    config_path = Path(config_path)
+    settings = load_yaml(config_path)
+    base_dir = config_path.parent.parent if config_path.parent.name == "config" else config_path.parent
+    artifacts = build_combo_artifacts(config_path)
+    matrix_df = artifacts.matrix_df.astype(str)
+    workflow = settings["pdf_workflow"]
+    supp_dir = Path(workflow["supplemental_pdfs_dir"])
+    if not supp_dir.is_absolute():
+        supp_dir = base_dir / supp_dir
+
+    row_boolean_map = workflow.get("row_boolean_map", [])
+    base_output_dir = Path(workflow["base_output_dir"])
+    create_output_folders(base_output_dir, len(artifacts.valid_combos))
+
+    for i in range(1, len(artifacts.valid_combos) + 1):
+        combo_col = f"COMBO {i}"
+        folder = base_output_dir / make_batch_folder_name(i)
+
+        inclusion_map: dict[str, bool] = {}
+        for item in row_boolean_map:
+            filename = item["filename"]
+            mode = item.get("mode", "always")
+            if mode == "always":
+                inclusion_map[filename] = True
+            elif mode == "row_true":
+                row_index = int(item["row_index"])
+                inclusion_map[filename] = str(matrix_df.loc[row_index, combo_col]) == "True"
+            elif mode == "row_false":
+                row_index = int(item["row_index"])
+                inclusion_map[filename] = str(matrix_df.loc[row_index, combo_col]) == "False"
+            else:
+                raise PdfWorkflowError(f"Unsupported mode: {mode}")
+
+        selected = [supp_dir / name for name, include in inclusion_map.items() if include]
+        selected = [p for p in selected if p.exists()]
+        if not selected:
+            continue
+
+        acrobat_app = win32com.client.Dispatch("AcroExch.App")
+        av_doc = win32com.client.Dispatch("AcroExch.AVDoc")
+
+        first_pdf = str(selected[0])
+        if not av_doc.Open(first_pdf, ""):
+            raise PdfWorkflowError(f"Failed to open {first_pdf}")
+
+        base_pd_doc = av_doc.GetPDDoc()
+        try:
+            for pdf_path in selected[1:]:
+                append_doc = win32com.client.Dispatch("AcroExch.PDDoc")
+                if not append_doc.Open(str(pdf_path)):
+                    continue
+                try:
+                    num_pages = append_doc.GetNumPages()
+                    base_pd_doc.InsertPages(base_pd_doc.GetNumPages() - 1, append_doc, 0, num_pages, True)
+                finally:
+                    append_doc.Close()
+
+            output_path = folder / workflow.get("merge_output_name", "_Q_AF.pdf")
+            if not base_pd_doc.Save(1, str(output_path)):
+                raise PdfWorkflowError(f"Failed to save merged PDF to {output_path}")
+        finally:
+            av_doc.Close(True)
+            acrobat_app.Exit()
+
+
+
+def copy_demo_templates_message() -> str:
+    return (
+        "Add your real _TEMPLATE.xlsx and supplemental PDFs under local ignored folders, "
+        "then update config/public_demo_settings.yaml or create a private local config."
+    )

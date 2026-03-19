@@ -1,0 +1,17 @@
+{
+  "exclusion_groups": [
+    ["FORM_FUNGI_EXCL", "FORM_FUNGI_SUBLIMIT"],
+    ["FORM_POOL_EXCL", "FORM_POOL_SUBLIMIT"],
+    ["FORM_LIAB_INCLUDED", "FORM_TRAMPOLINE_EXCL"],
+    ["FORM_LIAB_INCLUDED", "FORM_FARM_EXCL"]
+  ],
+  "require_together": [
+    ["FORM_BASE_POLICY", "FORM_COMMON_CONDITIONS"]
+  ],
+  "if_present_require_any": [
+    {
+      "if_present": "FORM_SPP_COVERAGE",
+      "require_any_of": ["FORM_SCHEDULED_ITEMS", "FORM_APPRAISAL"]
+    }
+  ]
+}

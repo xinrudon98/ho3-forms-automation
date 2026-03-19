@@ -1,0 +1,13 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+def ensure_parent(path: str | Path) -> Path:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def make_batch_folder_name(i: int) -> str:
+    return f"_{i:04d}"

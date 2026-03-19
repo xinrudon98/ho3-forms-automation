@@ -1,0 +1,19 @@
+project_name: ho3-public-demo
+input:
+  forms_file: data/sample/forms_public_demo.csv
+  sheet_name: HO3 FORMS
+  header_row: 0
+output:
+  combo_matrix_file: output/combo_matrix_output.xlsx
+  combo_json_file: output/forms_combos.json
+rules_file: config/rules.public_demo.json
+pdf_workflow:
+  base_output_dir: output/batches
+  template_excel: templates/_TEMPLATE.xlsx
+  master_sheet: MASTER
+  schedule_sheet: SCHEDULE OF FORMS
+  write_range: D11:D40
+  merge_output_name: _Q_AF.pdf
+  schedule_output_name: _Q_SOF.pdf
+  supplemental_pdfs_dir: templates/_FORMS_SIGNATURES
+  row_boolean_map: []
